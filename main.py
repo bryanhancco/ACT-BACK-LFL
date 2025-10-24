@@ -99,13 +99,13 @@ try:
     from src.docente.router import router as docente_router
     app.include_router(docente_router)
 except Exception as e:
-    print(f"rag router not included: {e}")
+    print(f"docente router not included: {e}")
     
 try:
     from src.clase.router import router as clase_router
     app.include_router(clase_router)
 except Exception as e:
-    print(f"rag router not included: {e}")
+    print(f"clase router not included: {e}")
 
 try:
     from src.rag.router import router as rag_router
