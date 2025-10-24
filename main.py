@@ -2,6 +2,18 @@ from fastapi import FastAPI, Body
 from fastapi.responses import JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 
+# Ensure project root is on sys.path so `import src.*` works reliably in all
+# environments (local, Render, Docker, etc.). Some platforms change the
+# working directory when launching the process which can make 'src' not
+# importable unless the project root is present in sys.path.
+import os
+import sys
+
+PROJECT_ROOT = os.path.abspath(os.path.dirname(__file__))
+if PROJECT_ROOT not in sys.path:
+    # Insert at front so local packages take precedence over site-packages
+    sys.path.insert(0, PROJECT_ROOT)
+
 app = FastAPI(title="LearningForLive", description="API", version="2.0.0")
 app.add_middleware(
     CORSMiddleware,
