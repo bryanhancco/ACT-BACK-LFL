@@ -28,6 +28,7 @@ async def crear_estudiante(estudiante: EstudianteCreateDTO):
 
 @router.post("/login")
 async def login_estudiante(login_data: EstudianteLoginDTO):
+    '''
     try:
         user = service.find_by_email(login_data.correo)
         if not user:
@@ -41,6 +42,8 @@ async def login_estudiante(login_data: EstudianteLoginDTO):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    '''
+    return {"message": "Hola mundo"}
 
 
 @router.get("/{id_estudiante}", response_model=EstudianteResponseDTO)

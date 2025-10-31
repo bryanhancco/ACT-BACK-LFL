@@ -1,0 +1,39 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python packaging
+build/
+dist/
+*.egg-info/
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Git
+.git
+
+# Environment variables and secrets
+.env
+*.env
+
+# Large data, uploads, local files
+uploads/
+data/
+
+# Node modules (if present)
+node_modules/
+
+# Test outputs
+.pytest_cache/
+
+# Logs
+*.log

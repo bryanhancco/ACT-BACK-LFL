@@ -1,6 +1,9 @@
+from http.client import HTTPException
 from fastapi import FastAPI, Body
 from fastapi.responses import JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
+
+
 
 # Ensure project root is on sys.path so `import src.*` works reliably in all
 # environments (local, Render, Docker, etc.). Some platforms change the
@@ -8,6 +11,9 @@ from fastapi.middleware.cors import CORSMiddleware
 # importable unless the project root is present in sys.path.
 import os
 import sys
+
+from src.estudiante.schema import EstudianteLoginDTO, EstudianteResponseDTO
+from src.estudiante import service
 
 PROJECT_ROOT = os.path.abspath(os.path.dirname(__file__))
 if PROJECT_ROOT not in sys.path:
@@ -19,17 +25,12 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",  
-        "http://127.0.0.1:3000",
-        "http://localhost:3001", 
-        "https://ia-docente-frontend.vercel.app",  
-        "https://*.vercel.app",
-        # note: wildcard patterns like "https://*.ngrok-free.app" are not matched by
-        # CORSMiddleware's exact-origin matching. We'll use allow_origin_regex below
-        # to permit dynamic ngrok subdomains.
-        "https://your-production-domain.com", 
+        "http://lfl-nlb-5909a369bb7b3f29.elb.us-east-2.elb.amazonaws.com",
     ],
-    # Accept dynamic ngrok subdomains (ngrok-free.app and ngrok.io) via regex
-    allow_origin_regex=r"^https:\/\/([a-z0-9-]+\.)?(ngrok-free\.app|ngrok\.io)$",
+    # Accept dynamic ngrok subdomains and ELB hostnames via regex.
+    # Match origins that end with ngrok-free.app, ngrok.io or elb.amazonaws.com
+    # and allow multiple subdomain labels (e.g. lfl-frontend-elb-... .us-east-2.elb.amazonaws.com).
+    allow_origin_regex=r"^https?://([A-Za-z0-9-]+\.)*elb\.amazonaws\.com$|^https?://([A-Za-z0-9-]+\.)*(ngrok-free\.app|ngrok\.io)$",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"],
     allow_headers=[
@@ -49,52 +50,48 @@ app.add_middleware(
     ],
 )
 
+# Rely on Starlette/FastAPI CORSMiddleware to manage CORS preflights and headers.
+# The previous custom `cors_handler` middleware was removed because it could
+# interfere with CORSMiddleware ordering and cause missing Access-Control headers
+# on OPTIONS requests.
+
+
+# Lightweight logging middleware for debugging Origin headers (non-invasive).
+# This middleware only logs the Origin header and forwards the request. It does
+# not modify responses or short-circuit OPTIONS preflights, so CORSMiddleware
+# remains responsible for CORS headers.
 @app.middleware("http")
-async def cors_handler(request, call_next):
-    origin = request.headers.get("origin")
-    # If this is a preflight request, return CORS headers immediately
-    allowed_origins = [
-        "https://ia-docente-frontend.vercel.app",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000"
-    ]
-
-    def apply_cors_headers(resp: Response):
-        if origin:
-            if (origin in allowed_origins or
-                "ngrok-free.app" in origin or
-                "ngrok.io" in origin or
-                "vercel.app" in origin or
-                "localhost" in origin):
-                resp.headers["Access-Control-Allow-Origin"] = origin
-
-        resp.headers["Access-Control-Allow-Credentials"] = "true"
-        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, HEAD, PATCH"
-        resp.headers["Access-Control-Allow-Headers"] = "Accept, Accept-Language, Content-Language, Content-Type, Authorization, X-Requested-With, Origin, Access-Control-Request-Method, Access-Control-Request-Headers, ngrok-skip-browser-warning, X-Forwarded-For, X-Forwarded-Proto, X-Real-IP"
-
-        if origin and "ngrok" in str(origin):
-            resp.headers["ngrok-skip-browser-warning"] = "true"
-
-    if request.method == "OPTIONS":
-        # reply to preflight
-        preflight_resp = Response(status_code=200)
-        apply_cors_headers(preflight_resp)
-        return preflight_resp
-
+async def log_origin_header(request, call_next):
     try:
-        response = await call_next(request)
-    except Exception as e:
-        # Ensure even on internal errors we return CORS headers so browser can see the response
-        error_body = {"detail": str(e)}
-        response = JSONResponse(content=error_body, status_code=500)
-
-    apply_cors_headers(response)
+        origin = request.headers.get("origin")
+        if origin:
+            # Use print so messages appear in container stdout (ECS task logs)
+            print(f"[CORS DEBUG] Received Origin: {origin}")
+    except Exception:
+        pass
+    response = await call_next(request)
     return response
+
 
 @app.get("/")
 async def read_root():
     return {"message": "Hola mundo"}
 
+@app.post("/login")
+async def login_estudiante(login_data: EstudianteLoginDTO):
+    try:
+        user = service.find_by_email(login_data.correo)
+        if not user:
+            raise HTTPException(status_code=401, detail="Credenciales inválidas")
+        if not service.verify_password(login_data.password, user['password']):
+            raise HTTPException(status_code=401, detail="Credenciales inválidas")
+
+        user.pop('password', None)
+        return {"message": "Login exitoso", "estudiante": EstudianteResponseDTO(**user)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
