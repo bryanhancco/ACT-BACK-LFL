@@ -28,22 +28,20 @@ async def crear_estudiante(estudiante: EstudianteCreateDTO):
 
 @router.post("/login")
 async def login_estudiante(login_data: EstudianteLoginDTO):
-    '''
     try:
         user = service.find_by_email(login_data.correo)
         if not user:
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
-        if not service.verify_password(login_data.password, user['password']):
+        if not service.verify_password(login_data.password, user.get('password', '')):
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
 
+        # remove password before returning
         user.pop('password', None)
         return {"message": "Login exitoso", "estudiante": EstudianteResponseDTO(**user)}
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    '''
-    return {"message": "Hola mundo"}
 
 
 @router.get("/{id_estudiante}", response_model=EstudianteResponseDTO)
