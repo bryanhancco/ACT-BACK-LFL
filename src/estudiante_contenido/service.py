@@ -22,13 +22,48 @@ async def generar_indices_contenido_estudiante(id_clase: int, manager) -> List[C
     if not clase_result.data:
         raise Exception("Clase no encontrada")
 
-    # try to get context from chroma (caller can prepare manager/context)
+    # Try to prepare a richer 'contenido' for the indexer by running a RAG retrieval
+    # so the index generation is grounded in the class materials (if available).
+    indice_resultado = []
     try:
-        # manager should expose generar_indice_clase
-        indice_resultado = await manager.generar_indice_clase(
-            contenido="", nivel_clase=clase_result.data[0].get("nivel_educativo", "Secundaria")
-        )
-    except Exception:
+        tema = clase_result.data[0].get("tema", "Contenido educativo")
+        # attempt to import RAG retrieval util
+        try:
+            from src.rag.service import retrieve_top_k_documents
+        except Exception:
+            retrieve_top_k_documents = None
+
+        retrieved_texts = []
+        if retrieve_top_k_documents is not None:
+            try:
+                # use the class namespace to retrieve relevant chunks
+                namespace = f"clase_{id_clase}"
+                docs = retrieve_top_k_documents(tema, namespace=namespace, top_k=10)
+                for d in (docs or []):
+                    txt = None
+                    if isinstance(d, dict):
+                        txt = d.get('text') or (d.get('metadata') or {}).get('text') or d.get('content')
+                    else:
+                        try:
+                            txt = getattr(d, 'text', None) or getattr(d, 'content', None)
+                        except Exception:
+                            txt = None
+                    if txt:
+                        retrieved_texts.append(txt[:2000])
+            except Exception as e:
+                print(f"Error retrieving docs for indices generation: {e}")
+
+        # Build the contenido passed to the index generator: include tema and retrieved texts
+        contenido_para_indice = tema + "\n\n" + "\n\n".join(retrieved_texts) if retrieved_texts else tema
+
+        # manager should expose generar_indice_clase and expects the full content
+        try:
+            indice_resultado = await manager.generar_indice_clase(contenido=contenido_para_indice, nivel_clase=clase_result.data[0].get("nivel_educativo", "Secundaria"))
+        except Exception as e:
+            print(f"Error calling manager.generar_indice_clase: {e}")
+            indice_resultado = []
+    except Exception as e:
+        print(f"Error preparing contenido for indice generation: {e}")
         indice_resultado = []
 
     perfiles_cognitivos = ['Visual', 'Auditivo', 'Lector', 'Kinestesico']

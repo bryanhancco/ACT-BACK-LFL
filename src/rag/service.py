@@ -522,7 +522,7 @@ def process_pdf_collection(
         return {"ok": False, "reason": "no_chunks"}
 
     # prepare metadatas and ids
-    metadatas = [{"source": os.path.basename(pdf_path), "collection": collection_name, "chunk_index": i, "text": chunk[:500]} for i, chunk in enumerate(chunks)]
+    metadatas = [{"source": os.path.basename(pdf_path), "collection": collection_name, "chunk_index": i, "text": chunk[:2000]} for i, chunk in enumerate(chunks)]
     if dedupe:
         ids = [_deterministic_id(ch) for ch in chunks]
     else:
@@ -589,7 +589,7 @@ def process_class_files(
     if not chunks:
         return {"ok": False, "reason": "no_chunks"}
 
-    metadatas = [{"source": sources[i] if i < len(sources) else "", "chunk_index": i, "class_id": id_clase, "text": chunk[:500]} for i, chunk in enumerate(chunks)]
+    metadatas = [{"source": sources[i] if i < len(sources) else "", "chunk_index": i, "class_id": id_clase, "text": chunk[:2000]} for i, chunk in enumerate(chunks)]
     if dedupe:
         ids = [_deterministic_id(ch) for ch in chunks]
     else:
@@ -620,6 +620,13 @@ def retrieve_top_k_documents(query: str, index_name: str = DEFAULT_INDEX, top_k:
         # fallback to top-level fields
         if not text:
             text = m.get("text") or m.get("document") or None
+
+        # debug: print short preview of retrieved item
+        try:
+            preview = (text or "")[:300]
+            print(f"RAG retrieve: id={m.get('id')} score={m.get('score')} preview={preview}")
+        except Exception:
+            pass
 
         out.append({
             "id": m.get("id"),

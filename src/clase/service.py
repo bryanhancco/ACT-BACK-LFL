@@ -2,6 +2,7 @@ from typing import Optional, List, Dict, Any
 from database import supabase
 from ..files.service import file_service
 from datetime import datetime
+import re
 import os
 from typing import Any, Dict, List
 
@@ -164,24 +165,82 @@ async def procesar_clase(id_clase: int) -> Dict[str, Any]:
             raise Exception('RAG service no disponible en este entorno')
 
         # process_class_files will look into uploaded/class/{id_clase} in S3
-        rag_result = process_class_files(str(id_clase))
+        # Support both sync and async implementations of process_class_files
+        try:
+            maybe_rag = process_class_files(str(id_clase))
+            if getattr(maybe_rag, '__await__', None):
+                import asyncio
+                rag_result = asyncio.get_event_loop().run_until_complete(maybe_rag)
+            else:
+                rag_result = maybe_rag
+        except TypeError:
+            # fallback direct call
+            rag_result = process_class_files(str(id_clase))
+
         if not rag_result or not rag_result.get('ok'):
+            # log the rag_result for debugging
+            print(f"RAG processing failed, rag_result: {repr(rag_result)[:2000]}")
             raise Exception(f"RAG processing failed: {rag_result}")
 
-        namespace = rag_result.get('namespace')
+        # Extract namespace robustly: different implementations may return the name
+        # under different keys. If not present, fall back to the conventional
+        # namespace format `clase_{id_clase}` so subsequent retrievals work.
+        namespace = None
+        if isinstance(rag_result, dict):
+            namespace = (
+                rag_result.get('namespace')
+                or rag_result.get('index')
+                or rag_result.get('name')
+                or rag_result.get('namespace_name')
+            )
+        if not namespace:
+            # final fallback: construct expected namespace
+            namespace = f"clase_{id_clase}"
 
+
+        print(namespace)
         # 2) Recuperar contexto usando top-k
         context = ''
+        tema_text = clase_data.get('tema', 'Contenido educativo')
         if retrieve_top_k_documents is not None and namespace:
             try:
-                docs = retrieve_top_k_documents(clase_data.get('tema', 'contenido educativo'), namespace=namespace, top_k=10)
-                parts = [d.get('text') or (d.get('metadata') or {}).get('text') for d in docs]
-                parts = [p for p in parts if p]
-                context = '\n\n'.join(parts) if parts else 'Contenido educativo general'
-            except Exception:
-                context = 'Contenido educativo general'
+                docs = retrieve_top_k_documents(tema_text, namespace=namespace, top_k=10)
+                # normalize docs to list of texts
+                parts = []
+                for d in (docs or []):
+                    text = None
+                    if isinstance(d, dict):
+                        text = d.get('text') or (d.get('metadata') or {}).get('text') or d.get('content')
+                    else:
+                        # fallback: try attribute access
+                        try:
+                            text = getattr(d, 'text', None) or getattr(d, 'content', None)
+                        except Exception:
+                            text = None
+                    if text:
+                        # truncate each part to avoid extremely long prompts
+                        parts.append(text[:2000])
+
+                # debug logs: namespace and sample docs
+                try:
+                    print(f"RAG namespace: {namespace}")
+                    print(f"Top-k docs returned: {len(parts)}")
+                    for i, p in enumerate(parts[:3]):
+                        print(f"Doc {i+1} (truncated): {p[:500]}")
+                except Exception:
+                    pass
+
+                if parts:
+                    # Prepend the explicit tema to give the LLM strong signal
+                    header = f"Tema: {tema_text}\n\nContexto relevante extraído de los archivos de la clase:\n\n"
+                    context = header + '\n\n'.join(parts)
+                else:
+                    context = f"Tema: {tema_text}\n\nNo se encontró contexto relevante en los documentos."
+            except Exception as e:
+                print(f"Error retrieving top_k documents: {e}")
+                context = f"Tema: {tema_text}\n\nContenido educativo general"
         else:
-            context = 'Contenido educativo general'
+            context = f"Tema: {tema_text}\n\nContenido educativo general"
 
         contenidos_generados: List[Dict[str, Any]] = []
 
@@ -196,16 +255,68 @@ async def procesar_clase(id_clase: int) -> Dict[str, Any]:
         # 4) Generar estructura de clase
         if manager and hasattr(manager, 'generar_estructura_clase_completa'):
             try:
+                # debug: log length of context passed to LLM
+                try:
+                    print(f"Calling generar_estructura_clase_completa for clase {id_clase} with tema='{tema_text}' and context length={len(context)}")
+                except Exception:
+                    pass
+
                 estructura = await manager.generar_estructura_clase_completa(clase_data, context)
+
+                # debug: log first part of estructura
+                try:
+                    if isinstance(estructura, (str, bytes)):
+                        print(f"Estructura generated (truncated): {str(estructura)[:1000]}")
+                    else:
+                        print(f"Estructura generated (type {type(estructura)}): {str(estructura)[:1000]}")
+                except Exception:
+                    pass
+
                 if estructura:
-                    contenido_data = {
-                        'id_clase': id_clase,
-                        'tipo_recurso_generado': 'Estructura de Clase',
-                        'contenido': estructura,
-                        'estado': True,
-                    }
-                    resp = supabase.table('contenido').insert(contenido_data).execute()
-                    contenidos_generados.append({'tipo': 'Estructura de Clase', 'status': 'success', 'contenido_id': resp.data[0]['id'] if resp.data else None, 'preview': estructura[:200]})
+                    # Relevance check: ensure generated text relates to tema
+                    try:
+                        tema_keywords = [k.lower() for k in re.findall(r"\w{4,}", tema_text)]
+                        estructura_text = estructura if isinstance(estructura, str) else str(estructura)
+                        matches = sum(1 for k in tema_keywords if k in estructura_text.lower())
+                    except Exception:
+                        matches = 0
+
+                    if matches == 0:
+                        # Retry once with a stronger, explicit prompt injected into the context
+                        try:
+                            override_header = f"Por favor, genera UNA ESTRUCTURA de clase estrictamente relacionada con el siguiente tema: {tema_text}.\n\nIncluye títulos para secciones y tiempo estimado por sección en formato JSON de ejemplo. Usa el contexto extraído a continuación si es relevante.\n\n"
+                            override_context = override_header + (context or '')
+                            print(f"Relevance check failed for clase {id_clase} (tema={tema_text}). Attempting one retry with stronger prompt.")
+                            estructura_retry = await manager.generar_estructura_clase_completa(clase_data, override_context)
+                            estructura_text_retry = estructura_retry if isinstance(estructura_retry, str) else str(estructura_retry)
+                            retry_matches = sum(1 for k in tema_keywords if k in estructura_text_retry.lower())
+                            print(f"Retry matches: {retry_matches}")
+                            if retry_matches > 0:
+                                estructura = estructura_retry
+                            else:
+                                print(f"Retry also failed relevance check for clase {id_clase}.")
+                        except Exception as e:
+                            print(f"Retry error: {e}")
+
+                    # After optional retry, store result if acceptable
+                    estructura_text_final = estructura if isinstance(estructura, str) else str(estructura)
+                    final_matches = 0
+                    try:
+                        final_matches = sum(1 for k in [k.lower() for k in re.findall(r"\w{4,}", tema_text)] if k in estructura_text_final.lower())
+                    except Exception:
+                        final_matches = 0
+
+                    if final_matches == 0:
+                        contenidos_generados.append({'tipo': 'Estructura de Clase', 'status': 'warning', 'warning': 'Estructura generada no parece relacionada con el tema', 'preview': estructura_text_final[:300]})
+                    else:
+                        contenido_data = {
+                            'id_clase': id_clase,
+                            'tipo_recurso_generado': 'Estructura de Clase',
+                            'contenido': estructura,
+                            'estado': True,
+                        }
+                        resp = supabase.table('contenido').insert(contenido_data).execute()
+                        contenidos_generados.append({'tipo': 'Estructura de Clase', 'status': 'success', 'contenido_id': resp.data[0]['id'] if resp.data else None, 'preview': (estructura_text_final[:200])})
                 else:
                     contenidos_generados.append({'tipo': 'Estructura de Clase', 'status': 'error', 'error': 'No se pudo generar estructura'})
             except Exception as e:
