@@ -1,4 +1,6 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File, Body, Query
+from fastapi.responses import JSONResponse
+import asyncio
 from pydantic import BaseModel
 from typing import List, Optional
 from .schema import ClaseCreateDTO, ClaseResponseDTO
@@ -126,9 +128,29 @@ async def procesar_clase_route(id_clase: int):
     Este endpoint delega en `service.procesar_clase` y devuelve un resumen de lo generado.
     """
     try:
-        # call the service
-        result = await service.procesar_clase(id_clase)
-        return result
+        # Schedule the potentially long-running processing as a background
+        # asyncio task so the HTTP request can return quickly and avoid
+        # triggering gunicorn worker timeouts. The task will still run in
+        # the same worker process — use a proper background job queue for
+        # production if the job is heavy or memory intensive.
+        try:
+            loop = asyncio.get_event_loop()
+            loop.create_task(service.procesar_clase(id_clase))
+        except RuntimeError:
+            # If there's no running loop (unlikely under uvicorn worker),
+            # spawn a new one in a background thread as a last resort.
+            import threading
+
+            def _run():
+                import asyncio as _asyncio
+                _loop = _asyncio.new_event_loop()
+                _asyncio.set_event_loop(_loop)
+                _loop.run_until_complete(service.procesar_clase(id_clase))
+
+            t = threading.Thread(target=_run, daemon=True)
+            t.start()
+
+        return JSONResponse(status_code=202, content={"message": "Processing started", "clase_id": id_clase})
     except HTTPException:
         raise
     except Exception as e:

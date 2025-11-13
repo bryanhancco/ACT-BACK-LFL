@@ -85,7 +85,7 @@ async def subir_foto_docente(id_docente: int, file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Error al guardar la foto")
 
     # build full URL (assume API_BASE_URL env var if needed by image processor)
-    base_url = os.getenv("API_BASE_URL", "http://localhost:8000")
+    base_url = os.getenv("S3_BUCKET_BASE_URL")
     foto_url_completa = f"{base_url}{foto_url}"
 
     try:
