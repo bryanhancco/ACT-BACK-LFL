@@ -1191,9 +1191,10 @@ class AgenteContenidoIndice(AgentePedagogico):
             - Incluye descripciones de imágenes que serán generadas posteriormente
             - Las descripciones de imágenes deben ir entre llaves dobles: {{{{descripción de la imagen}}}}
             - Usa formato Markdown con encabezados, listas y énfasis visual
-            - Incluye diagramas conceptuales descritos como imágenes: {{{{Diagrama mostrando...}}}}
+            - Incluye diagramas conceptuales descritos como imágenes: {{{{Diagrama: mostrando...}}}}
             - Organiza la información de manera visual y estructurada
-            - Ejemplo: {{{{Imagen de un gráfico circular mostrando las proporciones de...}}}}
+            - Ejemplo: {{{{Imagen: de un gráfico circular mostrando las proporciones de...}}}}
+            - Estos descripciones siempre iniciaran así: Imagen|Diagrama|Tabla|Matriz: ... es importante que se siga esta estructura.
             """
         elif perfil == 'auditivo':
             return f"""

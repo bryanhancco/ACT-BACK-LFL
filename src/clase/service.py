@@ -205,23 +205,19 @@ async def procesar_clase(id_clase: int) -> Dict[str, Any]:
         if retrieve_top_k_documents is not None and namespace:
             try:
                 docs = retrieve_top_k_documents(tema_text, namespace=namespace, top_k=10)
-                # normalize docs to list of texts
                 parts = []
                 for d in (docs or []):
                     text = None
                     if isinstance(d, dict):
                         text = d.get('text') or (d.get('metadata') or {}).get('text') or d.get('content')
                     else:
-                        # fallback: try attribute access
                         try:
                             text = getattr(d, 'text', None) or getattr(d, 'content', None)
                         except Exception:
                             text = None
                     if text:
-                        # truncate each part to avoid extremely long prompts
                         parts.append(text[:2000])
 
-                # debug logs: namespace and sample docs
                 try:
                     print(f"RAG namespace: {namespace}")
                     print(f"Top-k docs returned: {len(parts)}")
@@ -244,7 +240,6 @@ async def procesar_clase(id_clase: int) -> Dict[str, Any]:
 
         contenidos_generados: List[Dict[str, Any]] = []
 
-        # 3) Crear manager de agentes si está disponible
         manager = None
         if crear_manager_agentes is not None:
             try:
@@ -255,7 +250,6 @@ async def procesar_clase(id_clase: int) -> Dict[str, Any]:
         # 4) Generar estructura de clase
         if manager and hasattr(manager, 'generar_estructura_clase_completa'):
             try:
-                # debug: log length of context passed to LLM
                 try:
                     print(f"Calling generar_estructura_clase_completa for clase {id_clase} with tema='{tema_text}' and context length={len(context)}")
                 except Exception:
